@@ -1,0 +1,253 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wordle</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #111; color: #f5f5f5;
+    font-family: system-ui, sans-serif; display: flex;
+    flex-direction: column; align-items: center; min-height: 100vh;
+  }
+  header {
+    width: 100%; padding: 18px; text-align: center;
+    border-bottom: 1px solid #333; font-size: 25px;
+    font-weight: 800; letter-spacing: 4px;
+  }
+  #status { color: #aaa; margin: 18px 0; font-size: 14px; }
+  #board {
+    display: grid; grid-template-columns: repeat(5, 56px);
+    gap: 6px; margin: 10px auto 24px;
+  }
+  .tile {
+    width: 56px; height: 56px; border: 2px solid #444;
+    display: grid; place-items: center; font-size: 25px;
+    font-weight: 750; text-transform: uppercase; border-radius: 5px;
+  }
+  .filled { border-color: #777; }
+  .correct { background: #538d4e; border-color: #538d4e; }
+  .present { background: #b59f3b; border-color: #b59f3b; }
+  .absent { background: #3a3a3c; border-color: #3a3a3c; }
+  #keyboard {
+    width: min(95%, 440px); display: flex;
+    flex-direction: column; gap: 8px;
+  }
+  .keyrow { display: flex; justify-content: center; gap: 5px; }
+  .key {
+    flex: 1; min-width: 0; height: 48px; border: 0;
+    border-radius: 5px; background: #555; color: white;
+    font-weight: 700; font-size: 14px; cursor: pointer;
+  }
+  .key.wide { flex: 1.5; font-size: 11px; }
+  button:active { opacity: .7; }
+  #restart {
+    margin: 22px 0; padding: 11px 20px; border-radius: 7px;
+    border: 1px solid #444; background: transparent;
+    color: white; cursor: pointer; font-size: 14px;
+  }
+  #restart:hover { background: #252525; }
+  footer { color: #666; font-size: 12px; margin-top: auto; padding: 20px; }
+  @media(max-width: 370px) {
+    #board { grid-template-columns: repeat(5, 49px); }
+    .tile { width: 49px; height: 49px; }
+    .key { height: 43px; }
+  }
+</style>
+</head>
+<body>
+<header>WORDLE</header>
+<div id="status">Loading words...</div>
+<div id="board"></div>
+<div id="keyboard"></div>
+<button id="restart">New Game ↻</button>
+<footer>GUESS THE 5-LETTER WORD</footer>
+
+<script>
+const board = document.querySelector("#board");
+const keyboard = document.querySelector("#keyboard");
+const status = document.querySelector("#status");
+
+const rows = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
+let words = [], answer = "", guesses = [], current = "";
+let finished = false;
+
+for (let i = 0; i < 30; i++) {
+  const tile = document.createElement("div");
+  tile.className = "tile";
+  board.appendChild(tile);
+}
+
+rows.forEach((letters, index) => {
+  const row = document.createElement("div");
+  row.className = "keyrow";
+
+  if (index === 2) addKey(row, "ENTER", "wide");
+  [...letters].forEach(letter => addKey(row, letter));
+  if (index === 2) addKey(row, "⌫", "wide");
+
+  keyboard.appendChild(row);
+});
+
+function addKey(row, key, extra = "") {
+  const button = document.createElement("button");
+  button.className = "key " + extra;
+  button.textContent = key;
+  button.dataset.key = key;
+  button.onclick = () => press(key);
+  row.appendChild(button);
+}
+
+async function loadWords() {
+  try {
+    const response = await fetch("words.txt");
+    if (!response.ok) throw new Error("Could not load words.txt");
+
+    words = (await response.text())
+      .split(/\s+/)
+      .map(w => w.trim().toUpperCase())
+      .filter(w => /^[A-Z]{5}$/.test(w));
+
+    words = [...new Set(words)];
+    if (!words.length) throw new Error("No five-letter words found");
+
+    newGame();
+  } catch (error) {
+    status.textContent =
+      "Can't load words.txt. Run this page using a local server.";
+  }
+}
+
+function newGame() {
+  if (!words.length) return;
+
+  const previous = answer;
+  answer = words[Math.floor(Math.random() * words.length)];
+
+  if (words.length > 1) {
+    while (answer === previous) {
+      answer = words[Math.floor(Math.random() * words.length)];
+    }
+  }
+
+  guesses = [];
+  current = "";
+  finished = false;
+  status.textContent = "Guess the word in 6 tries.";
+  drawBoard();
+  resetKeys();
+}
+
+function drawBoard() {
+  [...board.children].forEach((tile, i) => {
+    const row = Math.floor(i / 5);
+    const col = i % 5;
+    const value = guesses[row]?.word[col] ??
+      (row === guesses.length && !finished ? current[col] || "" : "");
+
+    tile.textContent = value;
+    tile.className = "tile";
+
+    if (value && row === guesses.length && !finished)
+      tile.classList.add("filled");
+
+    if (guesses[row]) tile.classList.add(guesses[row].colors[col]);
+  });
+}
+
+function press(key) {
+  if (finished || !words.length) return;
+
+  if (key === "ENTER") {
+    submitGuess();
+  } else if (key === "⌫" || key === "BACKSPACE") {
+    current = current.slice(0, -1);
+    drawBoard();
+  } else if (/^[A-Z]$/.test(key) && current.length < 5) {
+    current += key;
+    drawBoard();
+  }
+}
+
+function submitGuess() {
+  if (current.length !== 5) {
+    status.textContent = "Enter 5 letters first.";
+    return;
+  }
+
+  const letters = answer.split("");
+  const colors = Array(5).fill("absent");
+
+  // Mark correct letters first.
+  current.split("").forEach((letter, i) => {
+    if (letter === letters[i]) {
+      colors[i] = "correct";
+      letters[i] = null;
+    }
+  });
+
+  // Then mark misplaced letters, accounting for duplicates.
+  current.split("").forEach((letter, i) => {
+    if (colors[i] === "correct") return;
+    const found = letters.indexOf(letter);
+    if (found !== -1) {
+      colors[i] = "present";
+      letters[found] = null;
+    }
+  });
+
+  guesses.push({ word: current, colors });
+  current = "";
+  drawBoard();
+  updateKeys();
+
+  if (guesses[guesses.length - 1].word === answer) {
+    finished = true;
+    status.textContent = "Excellent! You got it 🎉";
+  } else if (guesses.length === 6) {
+    finished = true;
+    status.textContent = `The word was ${answer}. Try again!`;
+  } else {
+    status.textContent = `${6 - guesses.length} attempts remaining.`;
+  }
+}
+
+function updateKeys() {
+  guesses.forEach(guess => {
+    [...guess.word].forEach((letter, i) => {
+      const key = keyboard.querySelector(`[data-key="${letter}"]`);
+      const color = guess.colors[i];
+      if (!key) return;
+
+      if (color === "correct" ||
+          (color === "present" && !key.classList.contains("correct")) ||
+          (color === "absent" &&
+           !key.classList.contains("correct") &&
+           !key.classList.contains("present"))) {
+        key.classList.remove("correct", "present", "absent");
+        key.classList.add(color);
+      }
+    });
+  });
+}
+
+function resetKeys() {
+  keyboard.querySelectorAll(".key").forEach(key => {
+    key.classList.remove("correct", "present", "absent");
+  });
+}
+
+document.addEventListener("keydown", event => {
+  if (event.ctrlKey || event.altKey || event.metaKey) return;
+  if (event.key === "Enter") press("ENTER");
+  else if (event.key === "Backspace") press("BACKSPACE");
+  else if (/^[a-zA-Z]$/.test(event.key)) press(event.key.toUpperCase());
+});
+
+document.querySelector("#restart").onclick = newGame;
+loadWords();
+</script>
+</body>
+</html>
